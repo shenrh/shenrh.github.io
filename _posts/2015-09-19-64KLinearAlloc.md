@@ -1,0 +1,384 @@
+---
+title: Android 64K方法数和LinearAlloc
+---
+
+1、Dex 64k method size limit:
+
+	Unable to execute dex: method ID not in [0, 0xffff]: 65536
+	Conversion to Dalvik format failed: Unable to execute dex: method ID not in 	[0, 0xffff]: 65536
+	
+Dalvik指令集里，执行method的invoke-kind index大小只给了16bit，所以一个Android程式里最多只能执行前65536个method，后面多的都不能用。
+
+Android 5.0和更高版本使用名为ART运行环境，它原生支持从APK文件加载多个DEX文件。在应用安装时，它会执行预编译，扫描classes(..N).dex文件然后将其编译成单个.oat文件用于执行。所以multidex库的install方法会有一个检测，系统支持的就直接返回。
+
+	private static final boolean IS_VM_MULTIDEX_CAPABLE =
+            isVMMultidexCapable(System.getProperty("java.vm.version"));
+
+
+2、LinearAlloc exceeded 5MB capacity:
+
+	ERROR/dalvikvm(4620): LinearAlloc exceeded capacity (5242880), last=...
+	
+Android程序执行前会将class读进LinearAlloc这块buffer里，它的大小在Android 2.3之前是5MB，到了4.0后才改成8MB或16MB。2.3上通常是还没到65K限制就触发了LinearAlloc的问题。
+注意5MB buffer的限制不是classes.dex的文件大小的限制
+
+以上两个问题都会出现安装时的INSTALL_FAILED_DEXOPT错误，dexopt是dex optimization的意思，这一步会发生在安装完apk之后，它会检验.dex里面的指令集是不是合法，也会验method的上限数。超过上限的话，app还没启动就被这一步挡下，直接报错。dexopt也会试着将所有class/method都读进VM验证，这自然会运用到LinearAlloc buffer。如果buffer不够也是直接崩了。所以程序太大的话，通通会死在dexopt这过程里。
+
+拆分dex是唯一方案。
+
+3、Android方法数统计
+
+ 3.1 使用Android sdk build-tools 的dexdump工具
+
+	$ dexdump -f xxx.apk | grep method_ids_size
+	method_ids_size     : 46815
+	
+ 3.2 详细的统计dex方法数，可以使用GitHub开源工程[dex-method-counts](https://github.com/mihaip/dex-method-counts/)
+
+不同Activity使用的findViewById startActivity等系统方法会重复统计（一个Activity多次调用只算一次）
+
+	Read in 46815 method IDs.
+	<root>: 46815
+	    android: 2864
+	        accounts: 8
+	        animation: 28
+	        app: 412
+	        appwidget: 9
+	        content: 327
+	            pm: 75
+	            res: 73
+	        database: 35
+	            sqlite: 14
+	        graphics: 231
+	            drawable: 58
+	                shapes: 1
+	        location: 22
+	        media: 54
+	        net: 74
+	            http: 8
+	            wifi: 19
+	        nfc: 4
+	        os: 139
+	        preference: 3
+	        provider: 4
+	        support: 236
+	            v4: 236
+	                app: 168
+	                content: 4
+	                text: 1
+	                util: 10
+	                view: 44
+	                    accessibility: 3
+	                widget: 9
+	        telephony: 67
+	            cdma: 17
+	            gsm: 2
+	        text: 105
+	            format: 1
+	            method: 5
+	            style: 12
+	        util: 41
+	        view: 295
+	            accessibility: 1
+	            animation: 48
+	            inputmethod: 8
+	        webkit: 115
+	        widget: 655
+	    com: 42246
+	        alipay: 17
+	            mobile: 17
+	                command: 17
+	                    trigger: 17
+	        iflytek: 600
+	            a: 55
+	            msc: 220
+	                a: 75
+	                b: 31
+	                c: 67
+	            resource: 25
+	            speech: 55
+	            ui: 243
+	                a: 29
+	                b: 25
+	        mobeta: 241
+	            android: 241
+	                dslv: 241
+	        sina: 40413
+	            a: 5
+	            b: 10
+	            barcode: 45
+	            deviceidjnisdk: 2
+	            filter: 91
+	            gifdecoder: 75
+	            popupad: 561
+	                a: 1
+	                b: 73
+	                    a: 36
+	                c: 13
+	                constants: 8
+	                d: 15
+	                service: 181
+	                    a: 54
+	                    b: 89
+	                        a: 89
+	                    c: 25
+	                utility: 46
+	            push: 1139
+	                a: 34
+	                b: 8
+	                c: 130
+	                    a: 17
+	                d: 13
+	                datacenter: 73
+	                e: 116
+	                    a: 34
+	                    b: 82
+	                f: 18
+	                message: 60
+	                model: 67
+	                packetprocess: 104
+	                receiver: 10
+	                response: 184
+	                service: 131
+	                    message: 56
+	                utils: 165
+	            reducer: 21
+	            weibo: 38464
+	                a: 23
+	                account: 13
+	                    business: 13
+	                appmarket: 4
+	                    utility: 4
+	                appmarketinterface: 22
+	                apshare: 3
+	                b: 69
+	                browser: 2
+	                bundlemanager: 446
+	                    a: 21
+	                    c: 64
+	                business: 756
+	                c: 18
+	                card: 310
+	                    marketcomp: 13
+	                    model: 175
+	                    view: 66
+	                    widget: 25
+	                composer: 567
+	                    a: 96
+	                    model: 243
+	                    panel: 228
+	                d: 27
+	                data: 129
+	                    sp: 129
+	                        a: 25
+	                datasource: 125
+	                e: 12
+	                exception: 46
+	                f: 1
+	                g: 279
+	                gowidget: 135
+	                group: 1428
+	                    search: 79
+	                gson: 5
+	                    annotations: 5
+	                guardunion: 51
+	                guide: 184
+	                    custom: 89
+	                h: 17
+	                health: 578
+	                    model: 373
+	                    tracking: 189
+	                        mode: 145
+	                hotfix: 189
+	                    sdk: 17
+	                i: 28
+	                incremental: 8
+	                j: 170
+	                k: 1
+	                l: 43
+	                localpush: 159
+	                    a: 25
+	                    model: 37
+	                location: 28
+	                m: 708
+	                    a: 545
+	                media: 374
+	                    a: 104
+	                    player: 270
+	                        annotations: 1
+	                        exceptions: 1
+	                        ffmpeg: 2
+	                        option: 8
+	                            format: 4
+	                        pragma: 19
+	                models: 5064
+	                    gson: 57
+	                n: 64
+	                net: 916
+	                    a: 102
+	                    b: 36
+	                    c: 6
+	                    d: 40
+	                    e: 6
+	                    httpmethod: 194
+	                o: 54
+	                p: 94
+	                page: 60
+	                    view: 32
+	                plugin: 1406
+	                    authorize: 20
+	                    component: 427
+	                    proxy: 773
+	                        activity: 533
+	                        service: 20
+	                    tools: 89
+	                push: 659
+	                    a: 256
+	                        a: 66
+	                    mi: 25
+	                q: 6
+	                qrcode: 1
+	                r: 18
+	                radarinterface: 352
+	                    a: 106
+	                    b: 10
+	                    model: 194
+	                    requestmodels: 42
+	                requestmodels: 1851
+	                s: 83
+	                sdk: 466
+	                    api: 81
+	                    exception: 7
+	                    internal: 175
+	                    net: 70
+	                    utils: 133
+	                security: 22
+	                securityplugin: 4
+	                statistic: 24
+	                    business: 24
+	                syncinterface: 154
+	                    a: 33
+	                    contact: 65
+	                        model: 34
+	                    guard: 27
+	                        a: 13
+	                        model: 14
+	                t: 37
+	                terminal: 364
+	                u: 35
+	                universalimageloader: 46
+	                    cache: 4
+	                        disc: 4
+	                            impl: 2
+	                    core: 39
+	                        display: 2
+	                        download: 2
+	                    utils: 3
+	                utils: 2914
+	                    a: 15
+	                    weibohttpd: 42
+	                v: 32
+	                view: 7168
+	                    a: 59
+	                w: 130
+	                wbc: 83
+	                weiyouinterface: 101
+	                    a: 4
+	                wheel: 127
+	                    a: 22
+	                wlan: 171
+	                x: 29
+	        squareup: 57
+	            otto: 57
+	        tencent: 4
+	            tauth: 4
+	        tvmining: 4
+	            media: 4
+	        weibo: 36
+	            mobileads: 36
+	                controller: 2
+	                model: 5
+	                util: 2
+	                view: 27
+	        xiaomi: 871
+	            channel: 55
+	                commonutils: 55
+	                    file: 5
+	                    logger: 18
+	                    misc: 20
+	                    network: 3
+	                    string: 9
+	            mipush: 207
+	                sdk: 207
+	            push: 17
+	                log: 15
+	                service: 2
+	                    receivers: 2
+	            xmpush: 592
+	                thrift: 592
+	        yolu: 1
+	            wbc: 1
+	                sdk: 1
+	    dalvik: 4
+	        system: 4
+	    java: 1103
+	        io: 169
+	        lang: 357
+	            annotation: 1
+	            ref: 8
+	            reflect: 31
+	        math: 4
+	        net: 94
+	        nio: 23
+	            channels: 5
+	            charset: 6
+	        security: 24
+	            cert: 3
+	            spec: 3
+	        text: 8
+	        util: 424
+	            concurrent: 109
+	                atomic: 6
+	                locks: 22
+	            jar: 9
+	            regex: 12
+	            zip: 33
+	    javax: 28
+	        crypto: 15
+	            spec: 3
+	        net: 13
+	            ssl: 13
+	    org: 570
+	        apache: 422
+	            http: 261
+	                client: 38
+	                    entity: 1
+	                    methods: 24
+	                    utils: 3
+	                conn: 13
+	                    params: 4
+	                    scheme: 4
+	                    ssl: 2
+	                entity: 128
+	                    mime: 123
+	                        content: 57
+	                impl: 9
+	                    client: 8
+	                    conn: 1
+	                        tsccm: 1
+	                message: 3
+	                params: 13
+	                protocol: 3
+	                util: 4
+	            thrift: 161
+	                meta_data: 8
+	                protocol: 95
+	                transport: 26
+	        json: 54
+	        osgi: 80
+	            framework: 80
+	        xmlpull: 14
+	            v1: 14
+	Overall method count: 46815
+
+
