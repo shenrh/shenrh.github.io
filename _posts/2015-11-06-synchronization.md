@@ -46,3 +46,5 @@ Android的looper实现就使用了ThreadLocal存储looper，每个线程只有�
 	
 	而如果有一个ThreadLocal.Values对象存放在Thread里，需要用到时就直接获取，不与其他线程的数据进行交互，
 	那么就避免了同步带来的低效率问题，所以这个ThreadLocal正好被应用到了一个Thread对应一个Looper中
+	
+[ Android应用程序线程消息循环模型分析 ](http://blog.csdn.net/luoshengyang/article/details/6905587)
